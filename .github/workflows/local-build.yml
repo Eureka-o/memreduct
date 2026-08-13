@@ -36,6 +36,15 @@ jobs:
             /p:Platform=x64 `
             /p:PlatformToolset=v143
 
+      - name: Build ARM64 executable
+        shell: pwsh
+        run: |
+          msbuild memreduct\memreduct.sln `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=ARM64 `
+            /p:PlatformToolset=v143
+
       - name: Install NSIS
         shell: pwsh
         run: choco install nsis --yes --no-progress
@@ -45,17 +54,21 @@ jobs:
         run: |
           $version = '3.6.0'
           $packageRoot = Join-Path $env:RUNNER_TEMP 'memreduct-package'
-          $payloadRoot = Join-Path $packageRoot '64'
-          $binary = Get-ChildItem memreduct\bin -Filter memreduct.exe -Recurse |
-            Select-Object -First 1
-          if (-not $binary) { throw 'MSBuild did not produce memreduct.exe.' }
-          New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
-          Copy-Item $binary.FullName $payloadRoot
-          Copy-Item memreduct\bin\History.txt $payloadRoot
-          Copy-Item memreduct\bin\Readme.txt $payloadRoot
-          Copy-Item memreduct\bin\License.txt $payloadRoot
-          Copy-Item memreduct\bin\memreduct.lng $payloadRoot
-          Set-Content -Path (Join-Path $payloadRoot 'portable.dat') -Value '#PORTABLE#' -NoNewline
+          $payload64 = Join-Path $packageRoot '64'
+          $payloadArm64 = Join-Path $packageRoot 'ARM64'
+          $binary64 = Get-ChildItem memreduct\bin\64 -Filter memreduct.exe -Recurse | Select-Object -First 1
+          $binaryArm64 = Get-ChildItem memreduct\bin\ARM64 -Filter memreduct.exe -Recurse | Select-Object -First 1
+          if (-not $binary64 -or -not $binaryArm64) { throw 'MSBuild did not produce both architecture binaries.' }
+          foreach ($payload in @($payload64, $payloadArm64)) {
+            New-Item -ItemType Directory -Path $payload -Force | Out-Null
+            Copy-Item memreduct\bin\History.txt $payload
+            Copy-Item memreduct\bin\Readme.txt $payload
+            Copy-Item memreduct\bin\License.txt $payload
+            Copy-Item memreduct\bin\memreduct.lng $payload
+            Set-Content -Path (Join-Path $payload 'portable.dat') -Value '#PORTABLE#' -NoNewline
+          }
+          Copy-Item $binary64.FullName (Join-Path $payload64 'memreduct.exe')
+          Copy-Item $binaryArm64.FullName (Join-Path $payloadArm64 'memreduct.exe')
 
           $defines = @(
             "/DAPP_NAME=Mem Reduct"
@@ -67,7 +80,7 @@ jobs:
           & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" @defines builder\src\setup_script.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          Compress-Archive -Path "$payloadRoot\*" -DestinationPath memreduct\memreduct-3.6.0-portable.zip
+          Compress-Archive -Path "$packageRoot\*" -DestinationPath memreduct\memreduct-3.6.0-portable.zip
 
       - name: Upload local build
         uses: actions/upload-artifact@v4
