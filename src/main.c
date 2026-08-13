@@ -3,14 +3,32 @@
 
 #include "routine.h"
 
-#include <mountmgr.h>
-
 #include "main.h"
 #include "rapp.h"
 
 #include "resource.h"
 
 STATIC_DATA config = {0};
+
+#define APP_MOUNTMGR_DEVICE_NAME L"\\Device\\MountPointManager"
+#define APP_IOCTL_MOUNTMGR_QUERY_POINTS CTL_CODE ((ULONG)'m', 2, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+typedef struct _APP_MOUNTMGR_MOUNT_POINT
+{
+	ULONG symbolic_link_name_offset;
+	USHORT symbolic_link_name_length;
+	ULONG unique_id_offset;
+	USHORT unique_id_length;
+	ULONG device_name_offset;
+	USHORT device_name_length;
+} APP_MOUNTMGR_MOUNT_POINT, *PAPP_MOUNTMGR_MOUNT_POINT;
+
+typedef struct _APP_MOUNTMGR_MOUNT_POINTS
+{
+	ULONG size;
+	ULONG number_of_mount_points;
+	APP_MOUNTMGR_MOUNT_POINT mount_points[ANYSIZE_ARRAY];
+} APP_MOUNTMGR_MOUNT_POINTS, *PAPP_MOUNTMGR_MOUNT_POINTS;
 
 ULONG limits_arr[13] = {0};
 ULONG intervals_arr[13] = {0};
@@ -231,11 +249,11 @@ FORCEINLINE LPCWSTR _app_getcleanupreason (
 
 NTSTATUS _app_getvolumemountpoints (
 	_In_ HANDLE hdevice,
-	_Outptr_ PMOUNTMGR_MOUNT_POINTS *mountpoints_ptr
+	_Outptr_ PAPP_MOUNTMGR_MOUNT_POINTS *mountpoints_ptr
 )
 {
-	MOUNTMGR_MOUNT_POINT query = {0};
-	PMOUNTMGR_MOUNT_POINTS mountpoints = NULL;
+	APP_MOUNTMGR_MOUNT_POINT query = {0};
+	PAPP_MOUNTMGR_MOUNT_POINTS mountpoints = NULL;
 	ULONG buffer_length = 0x400;
 	ULONG_PTR return_length;
 	NTSTATUS status;
@@ -247,7 +265,7 @@ NTSTATUS _app_getvolumemountpoints (
 
 		status = _r_fs_deviceiocontrol (
 			hdevice,
-			IOCTL_MOUNTMGR_QUERY_POINTS,
+			APP_IOCTL_MOUNTMGR_QUERY_POINTS,
 			&query,
 			sizeof (query),
 			mountpoints,
@@ -258,7 +276,7 @@ NTSTATUS _app_getvolumemountpoints (
 		if (status != STATUS_BUFFER_OVERFLOW && status != STATUS_BUFFER_TOO_SMALL)
 			break;
 
-		buffer_length = mountpoints->Size > buffer_length ? mountpoints->Size : buffer_length * 2;
+		buffer_length = mountpoints->size > buffer_length ? mountpoints->size : buffer_length * 2;
 	}
 
 	if (NT_SUCCESS (status))
@@ -275,15 +293,17 @@ NTSTATUS _app_getvolumemountpoints (
 
 NTSTATUS _app_flushvolumecache ()
 {
-	PMOUNTMGR_MOUNT_POINTS object_mountpoints;
-	PMOUNTMGR_MOUNT_POINT mountpoint;
+	PAPP_MOUNTMGR_MOUNT_POINTS object_mountpoints;
+	PAPP_MOUNTMGR_MOUNT_POINT mountpoint;
 	OBJECT_ATTRIBUTES oa = {0};
 	IO_STATUS_BLOCK isb;
+	UNICODE_STRING volume_prefix;
 	UNICODE_STRING us;
 	HANDLE hdevice, hvolume;
 	NTSTATUS status;
 
-	RtlInitUnicodeString (&us, MOUNTMGR_DEVICE_NAME);
+	RtlInitUnicodeString (&us, APP_MOUNTMGR_DEVICE_NAME);
+	RtlInitUnicodeString (&volume_prefix, L"\\??\\Volume{");
 
 	InitializeObjectAttributes (&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
 
@@ -309,15 +329,15 @@ NTSTATUS _app_flushvolumecache ()
 	if (!NT_SUCCESS (status))
 		goto CleanupExit;
 
-	for (ULONG i = 0; i < object_mountpoints->NumberOfMountPoints; i++)
+	for (ULONG i = 0; i < object_mountpoints->number_of_mount_points; i++)
 	{
-		mountpoint = &object_mountpoints->MountPoints[i];
+		mountpoint = &object_mountpoints->mount_points[i];
 
-		us.Length = mountpoint->SymbolicLinkNameLength;
-		us.MaximumLength = mountpoint->SymbolicLinkNameLength + sizeof (UNICODE_NULL);
-		us.Buffer = PTR_ADD_OFFSET (object_mountpoints, mountpoint->SymbolicLinkNameOffset);
+		us.Length = mountpoint->symbolic_link_name_length;
+		us.MaximumLength = mountpoint->symbolic_link_name_length + sizeof (UNICODE_NULL);
+		us.Buffer = PTR_ADD_OFFSET (object_mountpoints, mountpoint->symbolic_link_name_offset);
 
-		if (MOUNTMGR_IS_VOLUME_NAME (&us)) // \\??\\Volume{1111-2222}
+		if (RtlPrefixUnicodeString (&volume_prefix, &us, TRUE))
 		{
 			InitializeObjectAttributes (&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
 
