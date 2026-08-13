@@ -11,8 +11,14 @@
 DEFINE_GUID (GUID_TrayIcon, 0xAE9053F0, 0x8D59, 0x4803, 0x9A, 0xBB, 0x74, 0xAF, 0xE6, 0x6B, 0x5F, 0xD2);
 
 
-#define TIMER 1000
+#define TIMER_FOREGROUND 1000
 #define UID 1337
+
+#define TRAY_ICON_SCALE 4
+#define TRAY_CONTAINER_MARGIN TRAY_ICON_SCALE
+#define TRAY_CONTAINER_PADDING_X TRAY_ICON_SCALE
+#define TRAY_CONTAINER_PADDING_Y TRAY_ICON_SCALE
+#define DEFAULT_TRAY_INTERVAL 5
 
 #define LANG_SUBMENU 1
 #define LANG_MENU 4
@@ -23,6 +29,7 @@ DEFINE_GUID (GUID_TrayIcon, 0xAE9053F0, 0x8D59, 0x4803, 0x9A, 0xBB, 0x74, 0xAF, 
 
 #define DEFAULT_AUTOREDUCT_VAL 90
 #define DEFAULT_AUTOREDUCTINTERVAL_VAL 30
+#define DEFAULT_AUTOREDUCT_ENABLE TRUE
 
 // minimum pause (in seconds) between usage-based automatic cleanups
 #define AUTOREDUCT_COOLDOWN 30
@@ -33,6 +40,8 @@ DEFINE_GUID (GUID_TrayIcon, 0xAE9053F0, 0x8D59, 0x4803, 0x9A, 0xBB, 0x74, 0xAF, 
 // colors
 #define TRAY_COLOR_BLACK RGB(0x00, 0x00, 0x00)
 #define TRAY_COLOR_WHITE RGB(0xFF, 0xFF, 0xFF)
+#define TRAY_COLOR_DARK_THEME TRAY_COLOR_WHITE
+#define TRAY_COLOR_LIGHT_THEME TRAY_COLOR_BLACK
 #define TRAY_COLOR_TEXT RGB(0xFF, 0xFF, 0xFF)
 #define TRAY_COLOR_BG RGB(0x00, 0x80, 0x40)
 #define TRAY_COLOR_WARNING RGB(0xFF, 0x80, 0x40)
@@ -65,10 +74,17 @@ typedef struct _STATIC_DATA
 {
 	HDC hdc;
 	HDC hdc_mask;
+	HDC hdc_render;
+	HDC hdc_mask_render;
 	HBITMAP hbitmap;
 	HBITMAP hbitmap_mask;
+	HBITMAP hbitmap_render;
+	HBITMAP hbitmap_mask_render;
+	PULONG bitmap_bits;
+	PULONG bitmap_mask_render_bits;
 	HFONT hfont;
 	RECT icon_size;
+	RECT render_size;
 	ULONG ms_prev;
 } STATIC_DATA, *PSTATIC_DATA;
 

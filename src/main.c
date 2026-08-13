@@ -145,6 +145,32 @@ ULONG _app_getwarningvalue ()
 	return _r_calc_clamp (_r_config_getulong (L"TrayLevelWarning", DEFAULT_WARNING_LEVEL, NULL), 0, 100);
 }
 
+ULONG _app_gettrayinterval ()
+{
+	return _r_calc_clamp (_r_config_getulong (L"TrayUpdateInterval", DEFAULT_TRAY_INTERVAL, NULL), 1, 60);
+}
+
+BOOLEAN _app_isdarktaskbar ()
+{
+	HANDLE hkey;
+	ULONG value;
+	NTSTATUS status;
+
+	status = _r_reg_openkey (HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0, KEY_READ, &hkey);
+
+	if (NT_SUCCESS (status))
+	{
+		status = _r_reg_queryulong (hkey, L"SystemUsesLightTheme", &value);
+
+		NtClose (hkey);
+
+		if (NT_SUCCESS (status))
+			return (value == 0);
+	}
+
+	return _r_wnd_isdarkmodeenabled ();
+}
+
 ULONG64 _app_getmemoryinfo (
 	_Out_ PR_MEMORY_INFO mem_info
 )
@@ -523,7 +549,7 @@ VOID _app_fontinit (
 	_r_config_getfont (L"TrayFont", logfont, dpi_value, NULL);
 
 	logfont->lfCharSet = DEFAULT_CHARSET;
-	logfont->lfQuality = _r_config_getboolean (L"TrayUseAntialiasing", FALSE, NULL) ? CLEARTYPE_QUALITY : NONANTIALIASED_QUALITY;
+	logfont->lfQuality = _r_config_getboolean (L"TrayUseAntialiasing", TRUE, NULL) ? ANTIALIASED_QUALITY : NONANTIALIASED_QUALITY;
 }
 
 VOID _app_drawbackground (
@@ -545,12 +571,13 @@ VOID _app_drawbackground (
 
 	SetDCPenColor (hdc, pen_clr);
 	SetDCBrushColor (hdc, brush_clr);
-
 	_r_dc_fillrect (hdc, rect, bg_clr);
 
 	if (is_round)
 	{
-		RoundRect (hdc, rect->left, rect->top, rect->right, rect->bottom, rect->right - 2, rect->right / 2);
+		LONG corner_size = min (rect->right - rect->left, rect->bottom - rect->top) / 2;
+
+		RoundRect (hdc, rect->left, rect->top, rect->right, rect->bottom, corner_size, corner_size);
 	}
 	else
 	{
@@ -563,6 +590,115 @@ VOID _app_drawbackground (
 	SetBkColor (hdc, prev_clr);
 }
 
+HFONT _app_gettrayfont (
+	_In_ HDC hdc,
+	_In_ LPCWSTR text,
+	_In_ LONG max_width,
+	_In_ LONG max_height,
+	_Out_ PSIZE text_size
+)
+{
+	LOGFONT logfont;
+	HGDIOBJ previous_font;
+	HFONT resized_font = NULL;
+	HFONT candidate_font;
+	LONG font_height;
+
+	previous_font = SelectObject (hdc, config.hfont);
+	GetTextExtentPoint32W (hdc, text, (INT)_r_str_getlength (text), text_size);
+
+	if (text_size->cx <= max_width && text_size->cy <= max_height)
+	{
+		SelectObject (hdc, previous_font);
+		return config.hfont;
+	}
+
+	GetObjectW (config.hfont, sizeof (logfont), &logfont);
+	font_height = logfont.lfHeight < 0 ? -logfont.lfHeight : logfont.lfHeight;
+
+	while (font_height > 1)
+	{
+		font_height -= 1;
+		logfont.lfHeight = logfont.lfHeight < 0 ? -font_height : font_height;
+
+		candidate_font = CreateFontIndirectW (&logfont);
+
+		if (!candidate_font)
+			break;
+
+		SelectObject (hdc, candidate_font);
+		GetTextExtentPoint32W (hdc, text, (INT)_r_str_getlength (text), text_size);
+		SelectObject (hdc, config.hfont);
+
+		if (text_size->cx <= max_width && text_size->cy <= max_height)
+		{
+			resized_font = candidate_font;
+			break;
+		}
+
+		DeleteObject (candidate_font);
+	}
+
+	SelectObject (hdc, previous_font);
+
+	return resized_font ? resized_font : config.hfont;
+}
+
+VOID _app_applyiconalpha (
+	_In_ COLORREF text_color,
+	_In_ BOOLEAN is_transparent,
+	_In_ BOOLEAN use_alpha
+)
+{
+	ULONG64 coverage_sum;
+	ULONG alpha, color, red, green, blue;
+	LONG source_x, source_y;
+	LONG x, y;
+
+	for (y = 0; y < config.icon_size.bottom; y++)
+	{
+		for (x = 0; x < config.icon_size.right; x++)
+		{
+			coverage_sum = 0;
+
+			for (source_y = 0; source_y < TRAY_ICON_SCALE; source_y++)
+			{
+				for (source_x = 0; source_x < TRAY_ICON_SCALE; source_x++)
+				{
+					color = config.bitmap_mask_render_bits[
+						((y * TRAY_ICON_SCALE + source_y) * config.render_size.right) +
+						(x * TRAY_ICON_SCALE + source_x)
+					];
+
+					coverage_sum += 0xFF - (color & 0xFF);
+				}
+			}
+
+			alpha = use_alpha ? (ULONG)(coverage_sum / (TRAY_ICON_SCALE * TRAY_ICON_SCALE)) : 0xFF;
+
+			if (is_transparent)
+			{
+				red = GetRValue (text_color);
+				green = GetGValue (text_color);
+				blue = GetBValue (text_color);
+			}
+			else
+			{
+				color = config.bitmap_bits[(y * config.icon_size.right) + x];
+				red = (color >> 16) & 0xFF;
+				green = (color >> 8) & 0xFF;
+				blue = color & 0xFF;
+			}
+
+			config.bitmap_bits[(y * config.icon_size.right) + x] =
+				(alpha << 24) |
+				(red << 16) |
+				(green << 8) |
+				blue;
+		}
+	}
+}
+
 HICON _app_iconcreate (
 	_In_opt_ ULONG percent
 )
@@ -573,11 +709,14 @@ HICON _app_iconcreate (
 	WCHAR icon_text[0x08];
 	ICONINFO ii = {0};
 	R_STRINGREF sr;
-	HGDIOBJ prev_bmp, prev_font;
+	HGDIOBJ prev_bmp, prev_font, prev_source_bmp;
+	HFONT draw_font;
 	HICON hicon_new;
 	COLORREF bg_color, text_color;
+	RECT background_rect;
+	SIZE text_size;
 	INT prev_mode;
-	BOOLEAN is_border, is_round, is_transparent, has_danger;
+	BOOLEAN is_border, is_round, is_transparent, has_danger, use_theme_text;
 
 	text_color = _r_config_getulong (L"TrayColorText", TRAY_COLOR_TEXT, NULL);
 	bg_color = _r_config_getulong (L"TrayColorBg", TRAY_COLOR_BG, NULL);
@@ -585,6 +724,7 @@ HICON _app_iconcreate (
 	is_transparent = _r_config_getboolean (L"TrayUseTransparency", FALSE, NULL);
 	is_border = _r_config_getboolean (L"TrayShowBorder", FALSE, NULL);
 	is_round = _r_config_getboolean (L"TrayRoundCorners", FALSE, NULL);
+	use_theme_text = is_transparent;
 
 	if (percent == 0)
 	{
@@ -605,8 +745,16 @@ HICON _app_iconcreate (
 		}
 		else
 		{
+			use_theme_text = FALSE;
 			text_color = has_danger ? _r_config_getulong (L"TrayColorDanger", TRAY_COLOR_DANGER, NULL) : _r_config_getulong (L"TrayColorWarning", TRAY_COLOR_WARNING, NULL);
 		}
+	}
+
+	if (use_theme_text && is_transparent)
+	{
+		text_color = _app_isdarktaskbar () ?
+			_r_config_getulong (L"TrayColorDarkTheme", TRAY_COLOR_DARK_THEME, NULL) :
+			_r_config_getulong (L"TrayColorLightTheme", TRAY_COLOR_LIGHT_THEME, NULL);
 	}
 
 	// set tray text
@@ -614,33 +762,77 @@ HICON _app_iconcreate (
 
 	_r_obj_initializestringref (&sr, icon_text);
 
+	draw_font = _app_gettrayfont (
+		config.hdc_render,
+		icon_text,
+		config.render_size.right - ((TRAY_CONTAINER_MARGIN + TRAY_CONTAINER_PADDING_X) * 2),
+		config.render_size.bottom - ((TRAY_CONTAINER_MARGIN + TRAY_CONTAINER_PADDING_Y) * 2),
+		&text_size
+	);
+
+	background_rect = config.render_size;
+
+	if (!is_transparent)
+	{
+		background_rect.right = min (config.render_size.right - (TRAY_CONTAINER_MARGIN * 2), text_size.cx + (TRAY_CONTAINER_PADDING_X * 2));
+		background_rect.bottom = min (config.render_size.bottom - (TRAY_CONTAINER_MARGIN * 2), text_size.cy + (TRAY_CONTAINER_PADDING_Y * 2));
+		background_rect.left = (config.render_size.right - background_rect.right) / 2;
+		background_rect.top = (config.render_size.bottom - background_rect.bottom) / 2;
+		background_rect.right += background_rect.left;
+		background_rect.bottom += background_rect.top;
+		is_round = TRUE;
+	}
+
 	// draw main device context
-	prev_bmp = SelectObject (config.hdc, config.hbitmap);
-	prev_font = SelectObject (config.hdc, config.hfont);
-	prev_mode = SetBkMode (config.hdc, TRANSPARENT);
+	prev_bmp = SelectObject (config.hdc_render, config.hbitmap_render);
+	prev_font = SelectObject (config.hdc_render, draw_font);
+	prev_mode = SetBkMode (config.hdc_render, TRANSPARENT);
 
-	_app_drawbackground (config.hdc, bg_color, is_border ? text_color : bg_color, is_transparent ? text_color : bg_color, &config.icon_size, is_round);
+	_app_drawbackground (config.hdc_render, bg_color, is_border ? text_color : bg_color, is_transparent ? text_color : bg_color, &background_rect, is_round);
 
-	_r_dc_drawtext (NULL, config.hdc, &sr, &config.icon_size, 0, 0, DT_VCENTER | DT_CENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX, text_color);
+	_r_dc_drawtext (NULL, config.hdc_render, &sr, &background_rect, 0, 0, DT_VCENTER | DT_CENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX, text_color);
 
-	SetBkMode (config.hdc, prev_mode);
+	SetBkMode (config.hdc_render, prev_mode);
 
-	SelectObject (config.hdc, prev_font);
-	SelectObject (config.hdc, prev_bmp);
+	SelectObject (config.hdc_render, prev_font);
+	SelectObject (config.hdc_render, prev_bmp);
 
 	// draw mask device context
+	prev_bmp = SelectObject (config.hdc_mask_render, config.hbitmap_mask_render);
+	prev_font = SelectObject (config.hdc_mask_render, draw_font);
+	prev_mode = SetBkMode (config.hdc_mask_render, TRANSPARENT);
+
+	if (is_transparent)
+	{
+		_app_drawbackground (config.hdc_mask_render, TRAY_COLOR_WHITE, is_border ? TRAY_COLOR_BLACK : TRAY_COLOR_WHITE, TRAY_COLOR_WHITE, &background_rect, is_round);
+	}
+	else
+	{
+		_r_dc_fillrect (config.hdc_mask_render, &config.render_size, TRAY_COLOR_WHITE);
+		_app_drawbackground (config.hdc_mask_render, TRAY_COLOR_WHITE, TRAY_COLOR_BLACK, TRAY_COLOR_BLACK, &background_rect, TRUE);
+	}
+
+	_r_dc_drawtext (NULL, config.hdc_mask_render, &sr, &background_rect, 0, 0, DT_VCENTER | DT_CENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX, TRAY_COLOR_BLACK);
+
+	SetBkMode (config.hdc_mask_render, prev_mode);
+
+	SelectObject (config.hdc_mask_render, prev_bmp);
+	SelectObject (config.hdc_mask_render, prev_font);
+
+	prev_bmp = SelectObject (config.hdc, config.hbitmap);
+	prev_source_bmp = SelectObject (config.hdc_render, config.hbitmap_render);
+	prev_mode = SetStretchBltMode (config.hdc, HALFTONE);
+	SetBrushOrgEx (config.hdc, 0, 0, NULL);
+	StretchBlt (config.hdc, 0, 0, config.icon_size.right, config.icon_size.bottom, config.hdc_render, 0, 0, config.render_size.right, config.render_size.bottom, SRCCOPY);
+	SetStretchBltMode (config.hdc, prev_mode);
+	SelectObject (config.hdc_render, prev_source_bmp);
+	SelectObject (config.hdc, prev_bmp);
+
+	_app_applyiconalpha (text_color, is_transparent, is_transparent || is_round);
+
 	prev_bmp = SelectObject (config.hdc_mask, config.hbitmap_mask);
-	prev_font = SelectObject (config.hdc_mask, config.hfont);
-	prev_mode = SetBkMode (config.hdc_mask, TRANSPARENT);
-
-	_app_drawbackground (config.hdc_mask, TRAY_COLOR_WHITE, is_border ? TRAY_COLOR_BLACK : TRAY_COLOR_WHITE, is_transparent ? TRAY_COLOR_WHITE : TRAY_COLOR_BLACK, &config.icon_size, is_round);
-
-	_r_dc_drawtext (NULL, config.hdc_mask, &sr, &config.icon_size, 0, 0, DT_VCENTER | DT_CENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX, TRAY_COLOR_BLACK);
-
-	SetBkMode (config.hdc_mask, prev_mode);
-
+	PatBlt (config.hdc_mask, 0, 0, config.icon_size.right, config.icon_size.bottom, BLACKNESS);
 	SelectObject (config.hdc_mask, prev_bmp);
-	SelectObject (config.hdc_mask, prev_font);
 
 	// create icon
 	ii.hbmMask = config.hbitmap_mask;
@@ -648,6 +840,9 @@ HICON _app_iconcreate (
 	ii.fIcon = TRUE;
 
 	hicon_new = CreateIconIndirect (&ii);
+
+	if (draw_font != config.hfont)
+		DeleteObject (draw_font);
 
 	if (hicon)
 		DestroyIcon (hicon);
@@ -679,7 +874,7 @@ VOID CALLBACK _app_timercallback (
 	// autocleanup functional
 	if (_r_sys_iselevated ())
 	{
-		if (_r_config_getboolean (L"AutoreductEnable", FALSE, NULL))
+		if (_r_config_getboolean (L"AutoreductEnable", DEFAULT_AUTOREDUCT_ENABLE, NULL))
 		{
 			if (mem_info.physical_memory.percent >= _app_getlimitvalue ())
 			{
@@ -789,6 +984,16 @@ VOID _app_iconredraw (
 		_app_timercallback (hwnd, 0, UID, 0);
 }
 
+VOID _app_timerinit (
+	_In_ HWND hwnd,
+	_In_ BOOLEAN is_foreground
+)
+{
+	KillTimer (hwnd, UID);
+
+	_r_sys_settimer (hwnd, UID, is_foreground ? TIMER_FOREGROUND : (_app_gettrayinterval () * 1000), &_app_timercallback);
+}
+
 VOID _app_iconinit (
 	_In_ LONG dpi_value
 )
@@ -799,18 +1004,23 @@ VOID _app_iconinit (
 
 	SAFE_DELETE_OBJECT (config.hbitmap_mask);
 	SAFE_DELETE_OBJECT (config.hbitmap);
+	SAFE_DELETE_OBJECT (config.hbitmap_mask_render);
+	SAFE_DELETE_OBJECT (config.hbitmap_render);
 	SAFE_DELETE_OBJECT (config.hfont);
 
 	SAFE_DELETE_DC (config.hdc_mask);
 	SAFE_DELETE_DC (config.hdc);
+	SAFE_DELETE_DC (config.hdc_mask_render);
+	SAFE_DELETE_DC (config.hdc_render);
 
 	// init font
-	_app_fontinit (&logfont, dpi_value);
+	_app_fontinit (&logfont, dpi_value * TRAY_ICON_SCALE);
 
 	config.hfont = CreateFontIndirectW (&logfont);
 
 	// init rect
 	SetRect (&config.icon_size, 0, 0, _r_dc_getsystemmetrics (SM_CXSMICON, dpi_value), _r_dc_getsystemmetrics (SM_CYSMICON, dpi_value));
+	SetRect (&config.render_size, 0, 0, config.icon_size.right * TRAY_ICON_SCALE, config.icon_size.bottom * TRAY_ICON_SCALE);
 
 	// init dc
 	hdc = GetDC (NULL);
@@ -820,10 +1030,16 @@ VOID _app_iconinit (
 
 	config.hdc = CreateCompatibleDC (hdc);
 	config.hdc_mask = CreateCompatibleDC (hdc);
+	config.hdc_render = CreateCompatibleDC (hdc);
+	config.hdc_mask_render = CreateCompatibleDC (hdc);
 
 	// init bitmap
 	config.hbitmap = _r_dc_createbitmap (hdc, config.icon_size.right, config.icon_size.bottom, &bits);
+	config.bitmap_bits = bits;
 	config.hbitmap_mask = CreateBitmap (config.icon_size.right, config.icon_size.bottom, 1, 1, NULL);
+	config.hbitmap_render = _r_dc_createbitmap (hdc, config.render_size.right, config.render_size.bottom, &bits);
+	config.hbitmap_mask_render = _r_dc_createbitmap (hdc, config.render_size.right, config.render_size.bottom, &bits);
+	config.bitmap_mask_render_bits = bits;
 
 	ReleaseDC (NULL, hdc);
 }
@@ -948,7 +1164,7 @@ INT_PTR CALLBACK SettingsProc (
 						_r_ctrl_enable (hwnd, IDC_HOTKEY_CLEAN, FALSE);
 					}
 
-					_r_button_setcheck (hwnd, IDC_AUTOREDUCTENABLE_CHK, _r_config_getboolean (L"AutoreductEnable", FALSE, NULL));
+					_r_button_setcheck (hwnd, IDC_AUTOREDUCTENABLE_CHK, _r_config_getboolean (L"AutoreductEnable", DEFAULT_AUTOREDUCT_ENABLE, NULL));
 
 					_r_updown_setrange (hwnd, IDC_AUTOREDUCTVALUE, 0, 100);
 
@@ -983,7 +1199,7 @@ INT_PTR CALLBACK SettingsProc (
 					_r_button_setcheck (hwnd, IDC_TRAYSHOWBORDER_CHK, _r_config_getboolean (L"TrayShowBorder", FALSE, NULL));
 					_r_button_setcheck (hwnd, IDC_TRAYROUNDCORNERS_CHK, _r_config_getboolean (L"TrayRoundCorners", FALSE, NULL));
 					_r_button_setcheck (hwnd, IDC_TRAYCHANGEBG_CHK, _r_config_getboolean (L"TrayChangeBg", TRUE, NULL));
-					_r_button_setcheck (hwnd, IDC_TRAYUSEANTIALIASING_CHK, _r_config_getboolean (L"TrayUseAntialiasing", FALSE, NULL));
+					_r_button_setcheck (hwnd, IDC_TRAYUSEANTIALIASING_CHK, _r_config_getboolean (L"TrayUseAntialiasing", TRUE, NULL));
 
 					dpi_value = _r_dc_gettaskbardpi ();
 
@@ -1002,6 +1218,8 @@ INT_PTR CALLBACK SettingsProc (
 					_r_listview_additem (hwnd, IDC_COLORS, 1, _r_locale_getstring (IDS_COLOR_BACKGROUND_HINT), I_DEFAULT, I_DEFAULT, _r_config_getulong (L"TrayColorBg", TRAY_COLOR_BG, NULL));
 					_r_listview_additem (hwnd, IDC_COLORS, 2, _r_locale_getstring (IDS_COLOR_WARNING_HINT), I_DEFAULT, I_DEFAULT, _r_config_getulong (L"TrayColorWarning", TRAY_COLOR_WARNING, NULL));
 					_r_listview_additem (hwnd, IDC_COLORS, 3, _r_locale_getstring (IDS_COLOR_DANGER_HINT), I_DEFAULT, I_DEFAULT, _r_config_getulong (L"TrayColorDanger", TRAY_COLOR_DANGER, NULL));
+					_r_listview_additem (hwnd, IDC_COLORS, 4, _r_locale_getstring (IDS_COLOR_DARK_THEME_HINT), I_DEFAULT, I_DEFAULT, _r_config_getulong (L"TrayColorDarkTheme", TRAY_COLOR_DARK_THEME, NULL));
+					_r_listview_additem (hwnd, IDC_COLORS, 5, _r_locale_getstring (IDS_COLOR_LIGHT_THEME_HINT), I_DEFAULT, I_DEFAULT, _r_config_getulong (L"TrayColorLightTheme", TRAY_COLOR_LIGHT_THEME, NULL));
 
 					break;
 				}
@@ -1013,6 +1231,9 @@ INT_PTR CALLBACK SettingsProc (
 
 					_r_updown_setrange (hwnd, IDC_TRAYLEVELDANGER, 0, 100);
 					_r_updown_setvalue (hwnd, IDC_TRAYLEVELDANGER, _app_getdangervalue ());
+
+					_r_updown_setrange (hwnd, IDC_TRAYUPDATEINTERVAL, 1, 60);
+					_r_updown_setvalue (hwnd, IDC_TRAYUPDATEINTERVAL, _app_gettrayinterval ());
 
 					_r_combobox_setcurrentitem (hwnd, IDC_TRAYACTIONSC, _r_config_getlong (L"TrayActionDc", 0, NULL));
 					_r_combobox_setcurrentitem (hwnd, IDC_TRAYACTIONMC, _r_config_getlong (L"TrayActionMc", 1, NULL));
@@ -1087,6 +1308,8 @@ INT_PTR CALLBACK SettingsProc (
 					_r_listview_setitem (hwnd, IDC_COLORS, 1, 0, _r_locale_getstring (IDS_COLOR_BACKGROUND_HINT), I_DEFAULT, I_DEFAULT, I_DEFAULT);
 					_r_listview_setitem (hwnd, IDC_COLORS, 2, 0, _r_locale_getstring (IDS_COLOR_WARNING_HINT), I_DEFAULT, I_DEFAULT, I_DEFAULT);
 					_r_listview_setitem (hwnd, IDC_COLORS, 3, 0, _r_locale_getstring (IDS_COLOR_DANGER_HINT), I_DEFAULT, I_DEFAULT, I_DEFAULT);
+					_r_listview_setitem (hwnd, IDC_COLORS, 4, 0, _r_locale_getstring (IDS_COLOR_DARK_THEME_HINT), I_DEFAULT, I_DEFAULT, I_DEFAULT);
+					_r_listview_setitem (hwnd, IDC_COLORS, 5, 0, _r_locale_getstring (IDS_COLOR_LIGHT_THEME_HINT), I_DEFAULT, I_DEFAULT, I_DEFAULT);
 
 					break;
 				}
@@ -1097,6 +1320,7 @@ INT_PTR CALLBACK SettingsProc (
 
 					_r_ctrl_setstring (hwnd, IDC_TRAYLEVELWARNING_HINT, _r_locale_getstring (IDS_TRAYLEVELWARNING_HINT));
 					_r_ctrl_setstring (hwnd, IDC_TRAYLEVELDANGER_HINT, _r_locale_getstring (IDS_TRAYLEVELDANGER_HINT));
+					_r_ctrl_setstring (hwnd, IDC_TRAYUPDATEINTERVAL_HINT, _r_locale_getstring (IDS_TRAYUPDATEINTERVAL_HINT));
 
 					_r_ctrl_setstring (hwnd, IDC_TRAYACTIONSC_HINT, _r_locale_getstring (IDS_TRAYACTIONSC_HINT));
 					_r_ctrl_setstring (hwnd, IDC_TRAYACTIONMC_HINT, _r_locale_getstring (IDS_TRAYACTIONMC_HINT));
@@ -1204,7 +1428,7 @@ INT_PTR CALLBACK SettingsProc (
 				{
 					LPNMITEMACTIVATE lpnmlv = (LPNMITEMACTIVATE)lparam;
 					CHOOSECOLOR cc = {0};
-					COLORREF clr, cust[0x10] = {TRAY_COLOR_DANGER, TRAY_COLOR_WARNING, TRAY_COLOR_BG, TRAY_COLOR_TEXT};
+					COLORREF clr, cust[0x10] = {TRAY_COLOR_DANGER, TRAY_COLOR_WARNING, TRAY_COLOR_BG, TRAY_COLOR_TEXT, TRAY_COLOR_DARK_THEME, TRAY_COLOR_LIGHT_THEME};
 
 					if (lpnmlv->hdr.idFrom != IDC_COLORS || lpnmlv->iItem == INT_ERROR)
 						break;
@@ -1234,6 +1458,14 @@ INT_PTR CALLBACK SettingsProc (
 						else if (lpnmlv->iItem == 3)
 						{
 							_r_config_setulong (L"TrayColorDanger", cc.rgbResult, NULL);
+						}
+						else if (lpnmlv->iItem == 4)
+						{
+							_r_config_setulong (L"TrayColorDarkTheme", cc.rgbResult, NULL);
+						}
+						else if (lpnmlv->iItem == 5)
+						{
+							_r_config_setulong (L"TrayColorLightTheme", cc.rgbResult, NULL);
 						}
 
 						_r_listview_setitem (hwnd, IDC_COLORS, lpnmlv->iItem, lpnmlv->iSubItem, NULL, I_DEFAULT, I_DEFAULT, cc.rgbResult);
@@ -1350,6 +1582,13 @@ INT_PTR CALLBACK SettingsProc (
 
 				is_stylechanged = TRUE;
 			}
+			else if (ctrl_id == IDC_TRAYUPDATEINTERVAL)
+			{
+				value = _r_updown_getvalue (hwnd, ctrl_id);
+
+				_r_config_setlong (L"TrayUpdateInterval", value, NULL);
+				_app_timerinit (_r_app_gethwnd (), _r_wnd_isvisible (_r_app_gethwnd (), FALSE));
+			}
 
 			if (is_stylechanged)
 			{
@@ -1413,6 +1652,17 @@ INT_PTR CALLBACK SettingsProc (
 						_app_iconredraw (_r_app_gethwnd ());
 
 						_r_listview_redraw (_r_app_gethwnd (), IDC_LISTVIEW);
+					}
+
+					break;
+				}
+
+				case IDC_TRAYUPDATEINTERVAL_CTRL:
+				{
+					if (notify_code == EN_CHANGE)
+					{
+						_r_config_setlong (L"TrayUpdateInterval", _r_updown_getvalue (hwnd, IDC_TRAYUPDATEINTERVAL), NULL);
+						_app_timerinit (_r_app_gethwnd (), _r_wnd_isvisible (_r_app_gethwnd (), FALSE));
 					}
 
 					break;
@@ -1760,7 +2010,7 @@ INT_PTR CALLBACK DlgProc (
 
 			_app_initialize (hwnd);
 
-			_r_sys_settimer (hwnd, UID, TIMER, &_app_timercallback);
+			_app_timerinit (hwnd, _r_wnd_isvisible (hwnd, FALSE));
 
 			break;
 		}
@@ -1874,6 +2124,19 @@ INT_PTR CALLBACK DlgProc (
 			break;
 		}
 
+		case WM_SETTINGCHANGE:
+		case WM_THEMECHANGED:
+		case WM_SYSCOLORCHANGE:
+		{
+			if (_r_config_getboolean (L"TrayUseTransparency", FALSE, NULL))
+			{
+				config.ms_prev = 0;
+				_r_tray_setinfo (hwnd, &GUID_TrayIcon, _app_iconcreate (0), NULL);
+			}
+
+			break;
+		}
+
 		case WM_DPICHANGED:
 		{
 			_app_iconinit (_r_dc_gettaskbardpi ());
@@ -1914,6 +2177,8 @@ INT_PTR CALLBACK DlgProc (
 
 		case WM_SHOWWINDOW:
 		{
+			_app_timerinit (hwnd, !!wparam);
+
 			if (wparam)
 				_app_iconredraw (hwnd);
 
@@ -2165,7 +2430,7 @@ INT_PTR CALLBACK DlgProc (
 							L"%" TEXT (PR_ULONG) L"%%",
 							_app_getlimitvalue (),
 							99,
-							_r_config_getboolean (L"AutoreductEnable", FALSE, NULL)
+							_r_config_getboolean (L"AutoreductEnable", DEFAULT_AUTOREDUCT_ENABLE, NULL)
 						);
 					}
 
@@ -2452,7 +2717,7 @@ INT_PTR CALLBACK DlgProc (
 
 				case IDM_TRAY_DISABLE_1:
 				{
-					_r_config_invertboolean (L"AutoreductEnable", FALSE, NULL);
+					_r_config_invertboolean (L"AutoreductEnable", DEFAULT_AUTOREDUCT_ENABLE, NULL);
 					break;
 				}
 

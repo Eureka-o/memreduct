@@ -1,3 +1,10 @@
+v3.6.0 (local build)
+- improved tray icon antialiasing with adaptive rounded containers
+- added configurable background refresh interval
+- added separate tray text colors for light and dark taskbars
+- enabled threshold-based automatic memory cleanup by default with cooldown protection
+- reduced background polling frequency while minimized to the tray
+
 v3.5.2 (1 April 2025)
 - added modified file cache clean
 - fixed pagefile displays wrong information (issue #262)

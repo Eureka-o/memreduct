@@ -1,0 +1,79 @@
+name: Local Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out Mem Reduct
+        uses: actions/checkout@v4
+        with:
+          path: memreduct
+
+      - name: Check out build dependencies
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/henrypp/routine.git routine
+          git clone --depth 1 https://github.com/henrypp/builder.git builder
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build x64 executable
+        shell: pwsh
+        run: |
+          msbuild memreduct\memreduct.sln `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:PlatformToolset=v143
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis --yes --no-progress
+
+      - name: Build unsigned installer
+        shell: pwsh
+        run: |
+          $version = '3.6.0'
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'memreduct-package'
+          $payloadRoot = Join-Path $packageRoot '64'
+          $binary = Get-ChildItem memreduct\bin -Filter memreduct.exe -Recurse |
+            Select-Object -First 1
+          if (-not $binary) { throw 'MSBuild did not produce memreduct.exe.' }
+          New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
+          Copy-Item $binary.FullName $payloadRoot
+          Copy-Item memreduct\bin\History.txt $payloadRoot
+          Copy-Item memreduct\bin\Readme.txt $payloadRoot
+          Copy-Item memreduct\bin\License.txt $payloadRoot
+          Copy-Item memreduct\bin\memreduct.lng $payloadRoot
+          Set-Content -Path (Join-Path $payloadRoot 'portable.dat') -Value '#PORTABLE#' -NoNewline
+
+          $defines = @(
+            "/DAPP_NAME=Mem Reduct"
+            "/DAPP_NAME_SHORT=memreduct"
+            "/DAPP_VERSION=$version"
+            "/DAPP_FILES_DIR=$packageRoot"
+            "/XOutFile memreduct\memreduct-3.6.0-setup.exe"
+          )
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" @defines builder\src\setup_script.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Compress-Archive -Path "$payloadRoot\*" -DestinationPath memreduct\memreduct-3.6.0-portable.zip
+
+      - name: Upload local build
+        uses: actions/upload-artifact@v4
+        with:
+          name: memreduct-3.6.0-local
+          path: |
+            memreduct/bin/**/memreduct.exe
+            memreduct/memreduct-3.6.0-setup.exe
+            memreduct/memreduct-3.6.0-portable.zip
+          if-no-files-found: error
+          retention-days: 7
