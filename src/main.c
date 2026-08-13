@@ -337,7 +337,8 @@ NTSTATUS _app_flushvolumecache ()
 		us.MaximumLength = mountpoint->symbolic_link_name_length + sizeof (UNICODE_NULL);
 		us.Buffer = PTR_ADD_OFFSET (object_mountpoints, mountpoint->symbolic_link_name_offset);
 
-		if (RtlPrefixUnicodeString (&volume_prefix, &us, TRUE))
+		if (us.Length >= volume_prefix.Length &&
+			RtlCompareMemory (us.Buffer, volume_prefix.Buffer, volume_prefix.Length) == volume_prefix.Length)
 		{
 			InitializeObjectAttributes (&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
 
@@ -1070,7 +1071,7 @@ VOID _app_timerinit (
 {
 	KillTimer (hwnd, UID);
 
-	_r_sys_settimer (hwnd, UID, is_foreground ? TIMER_FOREGROUND : (_app_gettrayinterval () * 1000), &_app_timercallback);
+	SetTimer (hwnd, UID, is_foreground ? TIMER_FOREGROUND : (_app_gettrayinterval () * 1000), &_app_timercallback);
 }
 
 VOID _app_iconinit (
@@ -1170,16 +1171,16 @@ INT_PTR CALLBACK SettingsProc (
 			{
 				case IDD_SETTINGS_GENERAL:
 				{
-					_r_button_setcheck (hwnd, IDC_ALWAYSONTOP_CHK, _r_config_getboolean (L"AlwaysOnTop", FALSE));
-					_r_button_setcheck (hwnd, IDC_LOADONSTARTUP_CHK, _r_autorun_isenabled ());
-					_r_button_setcheck (hwnd, IDC_STARTMINIMIZED_CHK, _r_config_getboolean (L"IsStartMinimized", FALSE));
-					_r_button_setcheck (hwnd, IDC_REDUCTCONFIRMATION_CHK, _r_config_getboolean (L"IsShowReductConfirmation", TRUE));
+					_r_ctrl_checkbutton (hwnd, IDC_ALWAYSONTOP_CHK, _r_config_getboolean (L"AlwaysOnTop", FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_LOADONSTARTUP_CHK, _r_autorun_isenabled ());
+					_r_ctrl_checkbutton (hwnd, IDC_STARTMINIMIZED_CHK, _r_config_getboolean (L"IsStartMinimized", FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_REDUCTCONFIRMATION_CHK, _r_config_getboolean (L"IsShowReductConfirmation", TRUE));
 
 					if (!_r_sys_iselevated ())
 						_r_ctrl_enable (hwnd, IDC_SKIPUACWARNING_CHK, FALSE);
 
-					_r_button_setcheck (hwnd, IDC_SKIPUACWARNING_CHK, _r_skipuac_isenabled ());
-					_r_button_setcheck (hwnd, IDC_CHECKUPDATES_CHK, _r_update_isenabled (FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_SKIPUACWARNING_CHK, _r_skipuac_isenabled ());
+					_r_ctrl_checkbutton (hwnd, IDC_CHECKUPDATES_CHK, _r_update_isenabled (FALSE));
 
 					_r_locale_enum (hwnd, IDC_LANGUAGE, 0);
 
@@ -1243,28 +1244,28 @@ INT_PTR CALLBACK SettingsProc (
 						_r_ctrl_enable (hwnd, IDC_HOTKEY_CLEAN, FALSE);
 					}
 
-					_r_button_setcheck (hwnd, IDC_AUTOREDUCTENABLE_CHK, _r_config_getboolean (L"AutoreductEnable", DEFAULT_AUTOREDUCT_ENABLE));
+					_r_ctrl_checkbutton (hwnd, IDC_AUTOREDUCTENABLE_CHK, _r_config_getboolean (L"AutoreductEnable", DEFAULT_AUTOREDUCT_ENABLE));
 
 					_r_updown_setrange (hwnd, IDC_AUTOREDUCTVALUE, 0, 100);
 
 					_r_updown_setvalue (hwnd, IDC_AUTOREDUCTVALUE, _app_getlimitvalue ());
 
-					_r_button_setcheck (hwnd, IDC_AUTOREDUCTINTERVALENABLE_CHK, _r_config_getboolean (L"AutoreductIntervalEnable", FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_AUTOREDUCTINTERVALENABLE_CHK, _r_config_getboolean (L"AutoreductIntervalEnable", FALSE));
 
 					_r_updown_setrange (hwnd, IDC_AUTOREDUCTINTERVALVALUE, 1, 1440);
 
 					_r_updown_setvalue (hwnd, IDC_AUTOREDUCTINTERVALVALUE, _app_getintervalvalue ());
 
-					_r_button_setcheck (hwnd, IDC_HOTKEY_CLEAN_CHK, _r_config_getboolean (L"HotkeyCleanEnable", FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_HOTKEY_CLEAN_CHK, _r_config_getboolean (L"HotkeyCleanEnable", FALSE));
 
-					if (!_r_button_ischecked (hwnd, IDC_HOTKEY_CLEAN_CHK))
+					if (!_r_ctrl_isbuttonchecked (hwnd, IDC_HOTKEY_CLEAN_CHK))
 						_r_ctrl_enable (hwnd, IDC_HOTKEY_CLEAN, FALSE);
 
 					_r_hotkey_set (hwnd, IDC_HOTKEY_CLEAN, _r_config_getlong (L"HotkeyClean", MAKEWORD (VK_F1, HOTKEYF_CONTROL)));
 
-					_r_wnd_sendcommand (hwnd, IDC_AUTOREDUCTENABLE_CHK, 0);
-					_r_wnd_sendcommand (hwnd, IDC_AUTOREDUCTINTERVALENABLE_CHK, 0);
-					_r_wnd_sendcommand (hwnd, IDC_HOTKEY_CLEAN_CHK, 0);
+					_r_ctrl_sendcommand (hwnd, IDC_AUTOREDUCTENABLE_CHK, 0);
+					_r_ctrl_sendcommand (hwnd, IDC_AUTOREDUCTINTERVALENABLE_CHK, 0);
+					_r_ctrl_sendcommand (hwnd, IDC_HOTKEY_CLEAN_CHK, 0);
 
 					break;
 				}
@@ -1274,11 +1275,11 @@ INT_PTR CALLBACK SettingsProc (
 					LOGFONT logfont;
 					LONG dpi_value;
 
-					_r_button_setcheck (hwnd, IDC_TRAYUSETRANSPARENCY_CHK, _r_config_getboolean (L"TrayUseTransparency", FALSE));
-					_r_button_setcheck (hwnd, IDC_TRAYSHOWBORDER_CHK, _r_config_getboolean (L"TrayShowBorder", FALSE));
-					_r_button_setcheck (hwnd, IDC_TRAYROUNDCORNERS_CHK, _r_config_getboolean (L"TrayRoundCorners", FALSE));
-					_r_button_setcheck (hwnd, IDC_TRAYCHANGEBG_CHK, _r_config_getboolean (L"TrayChangeBg", TRUE));
-					_r_button_setcheck (hwnd, IDC_TRAYUSEANTIALIASING_CHK, _r_config_getboolean (L"TrayUseAntialiasing", TRUE));
+					_r_ctrl_checkbutton (hwnd, IDC_TRAYUSETRANSPARENCY_CHK, _r_config_getboolean (L"TrayUseTransparency", FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_TRAYSHOWBORDER_CHK, _r_config_getboolean (L"TrayShowBorder", FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_TRAYROUNDCORNERS_CHK, _r_config_getboolean (L"TrayRoundCorners", FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_TRAYCHANGEBG_CHK, _r_config_getboolean (L"TrayChangeBg", TRUE));
+					_r_ctrl_checkbutton (hwnd, IDC_TRAYUSEANTIALIASING_CHK, _r_config_getboolean (L"TrayUseAntialiasing", TRUE));
 
 					dpi_value = _r_dc_gettaskbardpi ();
 
@@ -1317,16 +1318,16 @@ INT_PTR CALLBACK SettingsProc (
 					_r_combobox_setcurrentitem (hwnd, IDC_TRAYACTIONSC, _r_config_getlong (L"TrayActionDc", 0));
 					_r_combobox_setcurrentitem (hwnd, IDC_TRAYACTIONMC, _r_config_getlong (L"TrayActionMc", 1));
 
-					_r_button_setcheck (hwnd, IDC_SHOW_CLEAN_RESULT_CHK, _r_config_getboolean (L"BalloonCleanResults", TRUE));
-					_r_button_setcheck (hwnd, IDC_NOTIFICATIONSOUND_CHK, _r_config_getboolean (L"IsNotificationsSound", TRUE));
+					_r_ctrl_checkbutton (hwnd, IDC_SHOW_CLEAN_RESULT_CHK, _r_config_getboolean (L"BalloonCleanResults", TRUE));
+					_r_ctrl_checkbutton (hwnd, IDC_NOTIFICATIONSOUND_CHK, _r_config_getboolean (L"IsNotificationsSound", TRUE));
 
 					break;
 				}
 
 				case IDD_SETTINGS_ADVANCED:
 				{
-					_r_button_setcheck (hwnd, IDC_ALLOWSTANDBYLISTCLEANUP_CHK, _r_config_getboolean (L"IsAllowStandbyListCleanup", FALSE));
-					_r_button_setcheck (hwnd, IDC_LOGRESULTS_CHK, _r_config_getboolean (L"LogCleanResults", FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_ALLOWSTANDBYLISTCLEANUP_CHK, _r_config_getboolean (L"IsAllowStandbyListCleanup", FALSE));
+					_r_ctrl_checkbutton (hwnd, IDC_LOGRESULTS_CHK, _r_config_getboolean (L"LogCleanResults", FALSE));
 
 					break;
 				}
@@ -1749,7 +1750,7 @@ INT_PTR CALLBACK SettingsProc (
 
 				case IDC_ALWAYSONTOP_CHK:
 				{
-					BOOLEAN is_enable = _r_button_ischecked (hwnd, ctrl_id);
+					BOOLEAN is_enable = _r_ctrl_isbuttonchecked (hwnd, ctrl_id);
 
 					_r_config_setboolean (L"AlwaysOnTop", is_enable);
 
@@ -1760,7 +1761,7 @@ INT_PTR CALLBACK SettingsProc (
 
 				case IDC_LOADONSTARTUP_CHK:
 				{
-					BOOLEAN is_enable = _r_button_ischecked (hwnd, ctrl_id);
+					BOOLEAN is_enable = _r_ctrl_isbuttonchecked (hwnd, ctrl_id);
 
 					_r_autorun_enable (hwnd, is_enable);
 
@@ -1768,14 +1769,14 @@ INT_PTR CALLBACK SettingsProc (
 
 					_r_menu_checkitem (GetMenu (_r_app_gethwnd ()), IDM_LOADONSTARTUP_CHK, 0, MF_BYCOMMAND, is_enable);
 
-					_r_button_setcheck (hwnd, ctrl_id, is_enable);
+					_r_ctrl_checkbutton (hwnd, ctrl_id, is_enable);
 
 					break;
 				}
 
 				case IDC_STARTMINIMIZED_CHK:
 				{
-					BOOLEAN is_enable = _r_button_ischecked (hwnd, ctrl_id);
+					BOOLEAN is_enable = _r_ctrl_isbuttonchecked (hwnd, ctrl_id);
 
 					_r_config_setboolean (L"IsStartMinimized", is_enable);
 
@@ -1786,7 +1787,7 @@ INT_PTR CALLBACK SettingsProc (
 
 				case IDC_REDUCTCONFIRMATION_CHK:
 				{
-					BOOLEAN is_enable = _r_button_ischecked (hwnd, ctrl_id);
+					BOOLEAN is_enable = _r_ctrl_isbuttonchecked (hwnd, ctrl_id);
 
 					_r_config_setboolean (L"IsShowReductConfirmation", is_enable);
 
@@ -1797,7 +1798,7 @@ INT_PTR CALLBACK SettingsProc (
 
 				case IDC_SKIPUACWARNING_CHK:
 				{
-					BOOLEAN is_enable = _r_button_ischecked (hwnd, ctrl_id);
+					BOOLEAN is_enable = _r_ctrl_isbuttonchecked (hwnd, ctrl_id);
 
 					_r_skipuac_enable (hwnd, is_enable);
 
@@ -1805,14 +1806,14 @@ INT_PTR CALLBACK SettingsProc (
 
 					_r_menu_checkitem (GetMenu (_r_app_gethwnd ()), IDM_SKIPUACWARNING_CHK, 0, MF_BYCOMMAND, is_enable);
 
-					_r_button_setcheck (hwnd, ctrl_id, is_enable);
+					_r_ctrl_checkbutton (hwnd, ctrl_id, is_enable);
 
 					break;
 				}
 
 				case IDC_CHECKUPDATES_CHK:
 				{
-					BOOLEAN is_enable = _r_button_ischecked (hwnd, ctrl_id);
+					BOOLEAN is_enable = _r_ctrl_isbuttonchecked (hwnd, ctrl_id);
 
 					_r_update_enable (is_enable);
 
@@ -1842,7 +1843,7 @@ INT_PTR CALLBACK SettingsProc (
 						_r_ctrl_enable (hbuddy, 0, is_enabled);
 
 					if (is_enabled)
-						_r_config_setboolean (L"AutoreductEnable", _r_button_ischecked (hwnd, ctrl_id));
+						_r_config_setboolean (L"AutoreductEnable", _r_ctrl_isbuttonchecked (hwnd, ctrl_id));
 
 					break;
 				}
@@ -1858,14 +1859,14 @@ INT_PTR CALLBACK SettingsProc (
 						_r_ctrl_enable (hbuddy, 0, is_enabled);
 
 					if (is_enabled)
-						_r_config_setboolean (L"AutoreductIntervalEnable", _r_button_ischecked (hwnd, ctrl_id));
+						_r_config_setboolean (L"AutoreductIntervalEnable", _r_ctrl_isbuttonchecked (hwnd, ctrl_id));
 
 					break;
 				}
 
 				case IDC_HOTKEY_CLEAN_CHK:
 				{
-					BOOLEAN is_checked = _r_button_ischecked (hwnd, ctrl_id);
+					BOOLEAN is_checked = _r_ctrl_isbuttonchecked (hwnd, ctrl_id);
 
 					_r_ctrl_enable (hwnd, IDC_HOTKEY_CLEAN, is_checked);
 
@@ -1878,7 +1879,7 @@ INT_PTR CALLBACK SettingsProc (
 
 				case IDC_HOTKEY_CLEAN:
 				{
-					if (!_r_button_ischecked (hwnd, IDC_HOTKEY_CLEAN_CHK))
+					if (!_r_ctrl_isbuttonchecked (hwnd, IDC_HOTKEY_CLEAN_CHK))
 						break;
 
 					if (notify_code == EN_CHANGE)
@@ -1897,7 +1898,7 @@ INT_PTR CALLBACK SettingsProc (
 				case IDC_TRAYCHANGEBG_CHK:
 				case IDC_TRAYUSEANTIALIASING_CHK:
 				{
-					BOOLEAN is_enabled = _r_button_ischecked (hwnd, ctrl_id);
+					BOOLEAN is_enabled = _r_ctrl_isbuttonchecked (hwnd, ctrl_id);
 
 					switch (ctrl_id)
 					{
@@ -1956,13 +1957,13 @@ INT_PTR CALLBACK SettingsProc (
 
 				case IDC_SHOW_CLEAN_RESULT_CHK:
 				{
-					_r_config_setboolean (L"BalloonCleanResults", _r_button_ischecked (hwnd, ctrl_id));
+					_r_config_setboolean (L"BalloonCleanResults", _r_ctrl_isbuttonchecked (hwnd, ctrl_id));
 					break;
 				}
 
 				case IDC_NOTIFICATIONSOUND_CHK:
 				{
-					_r_config_setboolean (L"IsNotificationsSound", _r_button_ischecked (hwnd, ctrl_id));
+					_r_config_setboolean (L"IsNotificationsSound", _r_ctrl_isbuttonchecked (hwnd, ctrl_id));
 					break;
 				}
 
@@ -1997,13 +1998,13 @@ INT_PTR CALLBACK SettingsProc (
 
 				case IDC_ALLOWSTANDBYLISTCLEANUP_CHK:
 				{
-					_r_config_setboolean (L"IsAllowStandbyListCleanup", _r_button_ischecked (hwnd, ctrl_id));
+					_r_config_setboolean (L"IsAllowStandbyListCleanup", _r_ctrl_isbuttonchecked (hwnd, ctrl_id));
 					break;
 				}
 
 				case IDC_LOGRESULTS_CHK:
 				{
-					_r_config_setboolean (L"LogCleanResults", _r_button_ischecked (hwnd, ctrl_id));
+					_r_config_setboolean (L"LogCleanResults", _r_ctrl_isbuttonchecked (hwnd, ctrl_id));
 					break;
 				}
 			}
@@ -2039,13 +2040,13 @@ VOID _app_initialize (
 	else
 	{
 		if (hwnd)
-			_r_button_setshield (hwnd, IDC_CLEAN, TRUE);
+			_r_ctrl_setbuttonshield (hwnd, IDC_CLEAN, TRUE);
 	}
 
 	if (!hwnd)
 		return;
 
-	_r_button_setmargins (hwnd, IDC_CLEAN, _r_dc_getwindowdpi (hwnd));
+	_r_ctrl_setbuttonmargins (hwnd, IDC_CLEAN, _r_dc_getwindowdpi (hwnd));
 
 	// configure listview
 	_r_listview_setstyle (hwnd, IDC_LISTVIEW, LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP | LVS_EX_DOUBLEBUFFER, TRUE);
@@ -2224,7 +2225,7 @@ INT_PTR CALLBACK DlgProc (
 			_app_resizecolumns (hwnd);
 
 			if (!_r_sys_iselevated ())
-				_r_button_setmargins (hwnd, IDC_CLEAN, LOWORD (wparam));
+				_r_ctrl_setbuttonmargins (hwnd, IDC_CLEAN, LOWORD (wparam));
 
 			break;
 		}
@@ -2406,7 +2407,7 @@ INT_PTR CALLBACK DlgProc (
 
 						case 2:
 						{
-							_r_sys_createprocess (&taskmgr_sr, NULL, NULL, FALSE);
+							_r_sys_createprocess (taskmgr_sr.buffer, NULL, NULL, FALSE);
 							break;
 						}
 
