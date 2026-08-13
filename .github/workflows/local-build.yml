@@ -20,6 +20,8 @@ jobs:
         shell: pwsh
         run: |
           git clone --depth 1 https://github.com/henrypp/routine.git routine
+          git -C routine fetch --depth 1 origin 3020ca94007b824c387ce145a6ff22702dc22272
+          git -C routine checkout 3020ca94007b824c387ce145a6ff22702dc22272
           git clone --depth 1 https://github.com/henrypp/builder.git builder
 
       - name: Set up MSBuild
