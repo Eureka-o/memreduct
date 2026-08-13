@@ -54,6 +54,7 @@ jobs:
         run: |
           $version = '3.6.0'
           $packageRoot = Join-Path $env:RUNNER_TEMP 'memreduct-package'
+          $installerSource = Join-Path (Resolve-Path 'builder\src') 'memreduct-3.6.0-setup.exe'
           $payload64 = Join-Path $packageRoot '64'
           $payloadArm64 = Join-Path $packageRoot 'ARM64'
           $binary64 = Get-ChildItem memreduct\bin\64 -Filter memreduct.exe -Recurse | Select-Object -First 1
@@ -75,10 +76,12 @@ jobs:
             "/DAPP_NAME_SHORT=memreduct"
             "/DAPP_VERSION=$version"
             "/DAPP_FILES_DIR=$packageRoot"
-            "/XOutFile memreduct\memreduct-3.6.0-setup.exe"
+            "/XOutFile memreduct-3.6.0-setup.exe"
           )
           & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" @defines builder\src\setup_script.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path $installerSource)) { throw 'NSIS did not produce an installer.' }
+          Move-Item $installerSource memreduct\memreduct-3.6.0-setup.exe -Force
 
           Compress-Archive -Path "$packageRoot\*" -DestinationPath memreduct\memreduct-3.6.0-portable.zip
 
