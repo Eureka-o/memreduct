@@ -2942,6 +2942,9 @@ INT APIENTRY wWinMain (
 	if (!_r_app_initialize (&_app_parseargs))
 		return ERROR_APP_INIT_FAILURE;
 
+	// Avoid the shared dark-theme renderer's fixed dark-red DWM frame.
+	_r_config_setboolean (L"IsWindowBorderEnabled", FALSE);
+
 	hwnd = _r_app_createwindow (hinst, MAKEINTRESOURCEW (IDD_MAIN), MAKEINTRESOURCEW (IDI_MAIN), &DlgProc);
 
 	if (!hwnd)
