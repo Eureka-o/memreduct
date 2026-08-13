@@ -24,6 +24,10 @@ jobs:
           git -C routine checkout 3020ca94007b824c387ce145a6ff22702dc22272
           git clone --depth 1 https://github.com/henrypp/builder.git builder
 
+      - name: Rebuild localization resources
+        shell: pwsh
+        run: python builder\src\build_locale.py --name-short=memreduct
+
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 

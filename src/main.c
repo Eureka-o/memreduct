@@ -854,8 +854,14 @@ HICON _app_iconcreate (
 
 	if (!is_transparent)
 	{
-		background_rect.right = min (config.render_size.right - (TRAY_CONTAINER_MARGIN * 2), text_size.cx + (TRAY_CONTAINER_PADDING_X * 2));
-		background_rect.bottom = min (config.render_size.bottom - (TRAY_CONTAINER_MARGIN * 2), text_size.cy + (TRAY_CONTAINER_PADDING_Y * 2));
+		background_rect.right = min (
+			config.render_size.right - (TRAY_CONTAINER_MARGIN * 2),
+			max (TRAY_CONTAINER_MIN_WIDTH, text_size.cx + (TRAY_CONTAINER_PADDING_X * 2))
+		);
+		background_rect.bottom = min (
+			config.render_size.bottom - (TRAY_CONTAINER_MARGIN * 2),
+			max (TRAY_CONTAINER_MIN_HEIGHT, text_size.cy + (TRAY_CONTAINER_PADDING_Y * 2))
+		);
 		background_rect.left = (config.render_size.right - background_rect.right) / 2;
 		background_rect.top = (config.render_size.bottom - background_rect.bottom) / 2;
 		background_rect.right += background_rect.left;
