@@ -1099,8 +1099,11 @@ VOID _app_iconinit (
 	SAFE_DELETE_DC (config.hdc_mask_render);
 	SAFE_DELETE_DC (config.hdc_render);
 
-	// init font
-	_app_fontinit (&logfont, dpi_value * TRAY_ICON_SCALE);
+	// Read the configured point size at the real DPI, then scale the pixel height
+	// for the supersampled render surface. Passing scaled DPI here would scale
+	// the persisted point size twice and make font changes appear ineffective.
+	_app_fontinit (&logfont, dpi_value);
+	logfont.lfHeight *= TRAY_ICON_SCALE;
 
 	config.hfont = CreateFontIndirectW (&logfont);
 
